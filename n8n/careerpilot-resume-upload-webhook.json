@@ -1,0 +1,263 @@
+{
+  "name": "CareerPilot - Upload Resume and Build Candidate Profile",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-job-agent-upload-resume",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173,http://127.0.0.1:5173",
+          "binaryPropertyName": "resume"
+        }
+      },
+      "id": "resume-upload-trigger",
+      "name": "Resume Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "careerpilot-upload-resume",
+      "notesInFlow": true,
+      "notes": "Frontend uploads multipart/form-data with file field 'resume'. The binary output property must be 'resume' for Extract Uploaded Resume PDF."
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "resume",
+        "options": {}
+      },
+      "id": "extract-upload-pdf",
+      "name": "Extract Uploaded Resume PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resumeText=$json.text||'';if(!resumeText.trim())throw new Error('No text was extracted from the uploaded PDF. Upload a text-based PDF, not a damaged file.');\nconst system=`You are a strict resume parser. Use only facts in the supplied resume. Never invent skills, employers, projects, dates, metrics, education, or qualifications. Return valid JSON only, no Markdown. Schema: {\"candidate\":{\"name\":\"\",\"email\":\"\",\"phone\":\"\",\"linkedin\":\"\",\"github\":\"\"},\"summary\":\"\",\"experience\":[],\"projects\":[],\"skills\":{\"programming\":[],\"backend\":[],\"databases\":[],\"ai_ml\":[],\"frontend\":[],\"devops_tools\":[],\"other\":[]},\"education\":[],\"leadership\":[],\"preferred_roles\":[],\"years_of_experience\":0,\"job_search_keywords\":[]}. Preferred roles may be conservative inferences based on the resume, not claimed qualifications.`;\nreturn [{json:{resume_text:resumeText,system_prompt:system,user_prompt:`Parse this resume into the specified JSON schema.\\n\\nRESUME:\\n${resumeText}`}}];"
+      },
+      "id": "build-upload-prompt",
+      "name": "Build Resume Profile Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/generate",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'qwen2.5:7b', system: $json.system_prompt, prompt: $json.user_prompt, stream: false, format: 'json', options: { temperature: 0.1, num_ctx: 8192, num_predict: 3000 } }) }}",
+        "options": {
+          "timeout": 240000
+        }
+      },
+      "id": "qwen-upload-profile",
+      "name": "Qwen - Build Candidate Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$json.response;if(!raw)throw new Error('Ollama returned no profile. Confirm Ollama is running with qwen2.5:7b.');let p;try{p=typeof raw==='string'?JSON.parse(raw):raw}catch(e){throw new Error('Qwen returned invalid profile JSON: '+String(raw).slice(0,1000));}\nconst required=['candidate','summary','experience','projects','skills','education','leadership','preferred_roles','years_of_experience','job_search_keywords'];for(const k of required)if(!(k in p))throw new Error('Profile missing required field: '+k);\nif(!Array.isArray(p.preferred_roles)||!p.preferred_roles.length)p.preferred_roles=['Backend Engineer','Software Engineer','AI / LLM Engineer','Data Engineer','Database Engineer','Developer Tools Engineer'];\nif(!Array.isArray(p.job_search_keywords)||!p.job_search_keywords.length)p.job_search_keywords=['Python','Java','SQL','PostgreSQL','Backend APIs','LLMs','Data Pipelines'];\np.generated_by='qwen2.5:7b';p.generated_at=new Date().toISOString();return [{json:p}];"
+      },
+      "id": "validate-upload-profile",
+      "name": "Validate Uploaded Candidate Profile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toJson",
+        "mode": "each",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "candidate-profile.json",
+          "format": true,
+          "encoding": "utf8"
+        }
+      },
+      "id": "convert-upload-profile",
+      "name": "Convert Candidate Profile to File",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "D:\\job-agent\\candidate-profile.json",
+        "dataPropertyName": "data",
+        "options": {
+          "append": false
+        }
+      },
+      "id": "save-upload-profile",
+      "name": "Save Candidate Profile to D Drive",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p=$('Validate Uploaded Candidate Profile').first().json;return [{json:{upload_success:true,message:'Resume processed successfully. Future job searches will use this candidate profile.',profile_path:'D:\\\\job-agent\\\\candidate-profile.json',candidate:p.candidate,preferred_roles:p.preferred_roles,skills:p.skills,years_of_experience:p.years_of_experience,generated_at:p.generated_at}}];"
+      },
+      "id": "upload-success-response",
+      "name": "Prepare Upload Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-upload",
+      "name": "Respond to Resume Upload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Resume Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Uploaded Resume PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Uploaded Resume PDF": {
+      "main": [
+        [
+          {
+            "node": "Build Resume Profile Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Resume Profile Prompt": {
+      "main": [
+        [
+          {
+            "node": "Qwen - Build Candidate Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen - Build Candidate Profile": {
+      "main": [
+        [
+          {
+            "node": "Validate Uploaded Candidate Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Uploaded Candidate Profile": {
+      "main": [
+        [
+          {
+            "node": "Convert Candidate Profile to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Candidate Profile to File": {
+      "main": [
+        [
+          {
+            "node": "Save Candidate Profile to D Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Candidate Profile to D Drive": {
+      "main": [
+        [
+          {
+            "node": "Prepare Upload Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upload Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Resume Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "careerpilot-resume-upload-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
